@@ -140,6 +140,7 @@ var JiraClient = module.exports = function (config) {
     this.protocol = config.protocol ? config.protocol : 'https';
     this.path_prefix = config.path_prefix ? config.path_prefix : '/';
     this.port = config.port;
+    this.retries = config.retries;
     this.apiVersion = 2; // TODO Add support for other versions.
     this.agileApiVersion = '1.0';
     this.authApiVersion = '1';
@@ -232,6 +233,8 @@ var JiraClient = module.exports = function (config) {
 };
 
 (function () {
+
+    var self = this;
 
     /**
      * Simple utility to build a REST endpoint URL for the Jira API.
@@ -327,7 +330,13 @@ var JiraClient = module.exports = function (config) {
      * @param {string} [successString] If supplied, this is reported instead of the response body.
      * @return {Promise} Resolved with APIs response or rejected with error
      */
-    this.makeRequest = function (options, callback, successString) {
+    this.makeRequest = function (options, callback, successString, retries) {
+        var self = this;
+
+        if (retries) {
+            console.log('retries left:', retries);
+        }
+
         if (this.oauthConfig) {
             options.oauth = this.oauthConfig;
         } else if (this.basic_auth) {
@@ -347,16 +356,26 @@ var JiraClient = module.exports = function (config) {
         if (callback) {
             request(options, function (err, response, body) {
                 if (err || response.statusCode.toString()[0] != 2) {
-                    return callback(err ? err : body, null, response);
+                    if (self.retries) {
+                        if (retries === 1) {
+                            return callback(err ? err : body, null, response);
+                        } else if (retries > 1) {
+                            return self.makeRequest(options, callback, successString, retries - 1);
+                        } else {
+                            return self.makeRequest(options, callback, successString, self.retries);
+                        }
+                    } else {
+                        return callback(err ? err : body, null, response);
+                    }
                 }
 
-            if (typeof body == 'string') {
-                try {
-                    body = JSON.parse(body);
-                } catch (jsonErr) {
-                    return callback(jsonErr, null, response);
+                if (typeof body == 'string') {
+                    try {
+                        body = JSON.parse(body);
+                    } catch (jsonErr) {
+                        return callback(jsonErr, null, response);
+                    }
                 }
-            }
 
                 return callback(null, successString ? successString : body, response);
             });
